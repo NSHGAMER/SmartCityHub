@@ -1,0 +1,14 @@
+# Python files
+__pycache__/
+*.pyc
+
+# Environment / venv
+venv/
+.env
+
+# Credentials & local configs
+data/credentials.json
+
+# System files
+.DS_Store
+*.log

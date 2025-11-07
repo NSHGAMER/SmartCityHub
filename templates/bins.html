@@ -1,0 +1,169 @@
+<!-- templates/bins.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>SmartCityHub — Smart Bins</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <style> /* small local overrides */ #map { height:100%; min-height:420px; }</style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-title">SmartCityHub</div>
+    <nav class="site-nav">
+      <a href="/">Home</a>
+      <a href="/bins">Smart Bins</a>
+      <a href="/lights">Smart Lights</a>
+    </nav>
+  </header>
+
+  <div class="container">
+    <div class="page-header">
+      <h2>Smart Bins — Monitor locations & status</h2>
+      <div class="page-actions">
+        <input class="input" id="search" placeholder="Search by name or id" />
+        <select id="statusFilter" class="select">
+          <option value="">All statuses</option>
+          <option>Active</option>
+          <option>Full</option>
+          <option>Maintenance</option>
+        </select>
+        <button class="btn secondary" id="exportCsv">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card map-wrap" id="mapCard">
+          <div id="map" style="width:100%; height:100%"></div>
+        </div>
+        <div class="map-caption">Click a marker or click a row to center the map. Popups contain directions.</div>
+      </div>
+
+      <aside>
+        <div class="card">
+          <strong>Summary</strong>
+          <div class="kv">Total bins: <span id="totalBins">0</span></div>
+          <div class="kv">Full bins: <span id="fullBins">0</span></div>
+          <div style="margin-top:10px"><small class="kv">Tip: click a row to open marker popup.</small></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="card table-wrap" style="margin-top:12px">
+      <table class="table" id="binsTable">
+        <thead>
+          <tr><th>Device ID</th><th>Name</th><th>Latitude</th><th>Longitude</th><th>Status</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          {% for b in bins %}
+          <tr class="row-clickable" data-id="{{ b['id'] }}" data-name="{{ b['device_name'] }}" data-lat="{{ b['lat'] }}" data-lon="{{ b['lon'] }}" data-status="{{ b['status'] }}">
+            <td>{{ b['id'] }}</td>
+            <td>{{ b['device_name'] }}</td>
+            <td>{{ b['lat'] }}</td>
+            <td>{{ b['lon'] }}</td>
+            <td>{{ b['status'] }}</td>
+            <td class="muted">{{ b['notes'] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // helpers
+    function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<"'>]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
+
+    // read table rows
+    function readBinsFromTable(){
+      const rows = Array.from(document.querySelectorAll('#binsTable tbody tr'));
+      return rows.map(r => ({
+        id: r.dataset.id,
+        name: r.dataset.name,
+        lat: parseFloat(r.dataset.lat),
+        lon: parseFloat(r.dataset.lon),
+        status: r.dataset.status,
+        row: r
+      }));
+    }
+
+    // init map & markers
+    function init(){
+      const bins = readBinsFromTable();
+      document.getElementById('totalBins').innerText = bins.length;
+      document.getElementById('fullBins').innerText = bins.filter(b=>String(b.status).toLowerCase()==='full').length;
+
+      const defaultCenter = bins.length ? [bins[0].lat, bins[0].lon] : [12.9716,77.5946];
+      const map = L.map('map').setView(defaultCenter, 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap' }).addTo(map);
+
+      const markers = {};
+      bins.forEach(b=>{
+        if(isNaN(b.lat) || isNaN(b.lon)) return;
+        const m = L.marker([b.lat, b.lon]).addTo(map);
+        const popup = `<strong>${escapeHtml(b.name)}</strong><br/><small>${escapeHtml(b.id)}</small><div>Status: <strong>${escapeHtml(b.status)}</strong></div>
+                       <div style="margin-top:6px;"><a target="_blank" href="https://www.openstreetmap.org/directions?to=${b.lat},${b.lon}">Directions</a></div>`;
+        m.bindPopup(popup);
+        markers[b.id]=m;
+        b.marker=m;
+      });
+
+      // fit
+      const allMarkers = Object.values(markers);
+      if(allMarkers.length) {
+        const grp = L.featureGroup(allMarkers);
+        map.fitBounds(grp.getBounds().pad(0.2));
+      }
+
+      // interactions: click row -> open marker
+      document.querySelectorAll('#binsTable tbody tr').forEach(row=>{
+        row.addEventListener('click', ()=>{
+          const id = row.dataset.id;
+          const m = markers[id];
+          if(m){ map.setView(m.getLatLng(), 16); m.openPopup(); }
+          row.style.background='#fff4cb'; setTimeout(()=>row.style.background='',700);
+        });
+      });
+
+      // search & filter
+      document.getElementById('search').addEventListener('input', e=>{
+        const q = e.target.value.trim().toLowerCase();
+        document.querySelectorAll('#binsTable tbody tr').forEach(row=>{
+          const name = row.dataset.name.toLowerCase();
+          const id = row.dataset.id.toLowerCase();
+          const keep = !q || name.includes(q) || id.includes(q);
+          row.style.display = keep ? '' : 'none';
+        });
+      });
+
+      document.getElementById('statusFilter').addEventListener('change', e=>{
+        const f = e.target.value;
+        document.querySelectorAll('#binsTable tbody tr').forEach(row=>{
+          const st = row.dataset.status;
+          const keep = !f || st===f;
+          row.style.display = keep ? '' : 'none';
+        });
+      });
+
+      // export CSV
+      document.getElementById('exportCsv').addEventListener('click', ()=>{
+        const rows = Array.from(document.querySelectorAll('#binsTable tbody tr')).filter(r=>r.style.display!=='none');
+        const csv = ['id,name,lat,lon,status,notes'];
+        rows.forEach(r=>{
+          const cells = Array.from(r.querySelectorAll('td')).map(td=>'"'+td.innerText.replace(/"/g,'""')+'"');
+          csv.push(cells.join(','));
+        });
+        const blob = new Blob([csv.join('\\n')], {type:'text/csv'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'bins_export.csv'; document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(url);
+      });
+    }
+
+    window.addEventListener('load', init);
+  </script>
+</body>
+</html>

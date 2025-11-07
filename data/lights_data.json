@@ -1,0 +1,18 @@
+[
+  {
+    "id": "L1",
+    "location": "Main Street",
+    "lat": 12.9716,
+    "lon": 77.5946,
+    "status": "ON",
+    "camera_url": "https://example.com/camera1"
+  },
+  {
+    "id": "L2",
+    "location": "Park Road",
+    "lat": 12.9352,
+    "lon": 77.6245,
+    "status": "OFF",
+    "camera_url": ""
+  }
+]

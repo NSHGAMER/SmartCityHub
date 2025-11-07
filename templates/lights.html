@@ -1,0 +1,132 @@
+<!-- templates/lights.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <title>SmartCityHub — Smart Lights</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <style>#map{height:420px}</style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="site-title">SmartCityHub</div>
+    <nav class="site-nav">
+      <a href="/">Home</a><a href="/bins">Smart Bins</a><a href="/lights">Smart Lights</a>
+    </nav>
+  </header>
+
+  <div class="container">
+    <div class="page-header">
+      <h2>Smart Lights — locations & cameras</h2>
+      <div class="page-actions">
+        <input id="lightsSearch" class="input" placeholder="Search by id or location" />
+        <button class="btn secondary" id="exportLights">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div>
+        <div class="card map-wrap"><div id="map"></div></div>
+        <div class="map-caption">Lights shown as colored dots. Cameras (if present) are separate markers — toggle layers in the map control.</div>
+      </div>
+
+      <aside>
+        <div class="card">
+          <strong>Summary</strong>
+          <div class="kv">Total lights: <span id="totalLights">0</span></div>
+          <div class="kv">Lights ON: <span id="onLights">0</span></div>
+        </div>
+      </aside>
+    </div>
+
+    <div class="card table-wrap" style="margin-top:12px">
+      <table class="table" id="lightsTable">
+        <thead><tr><th>Light ID</th><th>Location</th><th>Latitude</th><th>Longitude</th><th>Status</th><th>Camera</th></tr></thead>
+        <tbody>
+          {% for l in lights %}
+          <tr data-id="{{ l['id'] }}" data-lat="{{ l['lat'] }}" data-lon="{{ l['lon'] }}" data-location="{{ l.get('location','') }}">
+            <td>{{ l['id'] }}</td>
+            <td>{{ l.get('location','') }}</td>
+            <td>{{ l.get('lat','') }}</td>
+            <td>{{ l.get('lon','') }}</td>
+            <td>{{ l.get('status','') }}</td>
+            <td>{% if l.get('camera_url') %}<a href="{{ l['camera_url'] }}" target="_blank">Open</a>{% else %}-{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    function escapeHtml(s){ if(!s && s!==0) return ''; return String(s).replace(/[&<"'>]/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m])); }
+    function readLights(){ return Array.from(document.querySelectorAll('#lightsTable tbody tr')).map(r=>({
+      id:r.dataset.id, location:r.dataset.location, lat:parseFloat(r.dataset.lat), lon:parseFloat(r.dataset.lon), status:r.cells[4].innerText, camera: r.cells[5].querySelector('a')?.href || ''
+    })); }
+
+    function initLights(){
+      const lights = readLights();
+      document.getElementById('totalLights').innerText = lights.length;
+      document.getElementById('onLights').innerText = lights.filter(l=>String(l.status).toLowerCase()==='on').length;
+
+      const defaultCenter = lights.length ? [lights[0].lat, lights[0].lon] : [12.9716,77.5946];
+      const map = L.map('map').setView(defaultCenter, 13);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+      const lightLayer = L.layerGroup().addTo(map);
+      const camLayer = L.layerGroup().addTo(map);
+      const byId = {};
+
+      lights.forEach(l=>{
+        if(isNaN(l.lat) || isNaN(l.lon)) return;
+        const color = (String(l.status).toLowerCase()==='on') ? '#10b981' : '#ef4444';
+        const circle = L.circleMarker([l.lat,l.lon], {radius:7, fillColor:color, color:'#222', weight:1, fillOpacity:0.9}).addTo(lightLayer);
+        circle.bindPopup(`<strong>${escapeHtml(l.id)}</strong><div>${escapeHtml(l.location)}</div><div>Status: ${escapeHtml(l.status)}</div>${ l.camera ? '<div><a target="_blank" href="'+escapeHtml(l.camera)+'">Open Camera</a></div>' : '' }`);
+        byId[l.id] = { light: circle };
+
+        if(l.camera){
+          const cam = L.marker([l.lat+0.00005, l.lon+0.00005]).addTo(camLayer);
+          cam.bindPopup(`<strong>Camera</strong><div>Light: ${escapeHtml(l.id)}</div><div><a target="_blank" href="${escapeHtml(l.camera)}">View</a></div>`);
+          byId[l.id].cam = cam;
+        }
+      });
+
+      const all = [].concat(...Object.values(byId).map(v=>[v.light].concat(v.cam? [v.cam]:[])).filter(Boolean));
+      if(all.length) map.fitBounds(L.featureGroup(all).getBounds().pad(0.2));
+
+      // click rows
+      document.querySelectorAll('#lightsTable tbody tr').forEach(row=>{
+        row.addEventListener('click', ()=> {
+          const id=row.dataset.id; const entry=byId[id];
+          const marker = entry?.light || entry?.cam;
+          if(marker){ map.setView(marker.getLatLng(), 16); marker.openPopup(); }
+        });
+      });
+
+      document.getElementById('lightsSearch').addEventListener('input', e=>{
+        const q = e.target.value.trim().toLowerCase();
+        document.querySelectorAll('#lightsTable tbody tr').forEach(r=>{
+          const text = (r.dataset.id + ' ' + r.dataset.location).toLowerCase();
+          r.style.display = (!q || text.includes(q)) ? '' : 'none';
+        });
+      });
+
+      document.getElementById('exportLights').addEventListener('click', ()=>{
+        const rows = Array.from(document.querySelectorAll('#lightsTable tbody tr')).filter(r=>r.style.display!=='none');
+        const csv = ['id,location,lat,lon,status,camera'];
+        rows.forEach(r=>{
+          const cells = Array.from(r.querySelectorAll('td')).map(td=>'"'+td.innerText.replace(/"/g,'""')+'"');
+          csv.push(cells.join(','));
+        });
+        const blob = new Blob([csv.join('\\n')], {type:'text/csv'}); const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href=url; a.download='lights_export.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      });
+
+    }
+
+    window.addEventListener('load', initLights);
+  </script>
+</body>
+</html>
