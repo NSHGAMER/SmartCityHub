@@ -1,5 +1,5 @@
 # app.py
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import json
 import os
 import gspread
@@ -8,7 +8,7 @@ from pathlib import Path
 app = Flask(__name__)
 
 # Config (use env vars in production)
-SHEET_ID = os.getenv("SHEET_ID", "1KA88moq8f59KCK2mjl_gsuBioC0aPzvZf5_RyraC4E")
+SHEET_ID = os.getenv("SHEET_ID", "https://docs.google.com/spreadsheets/d/1KA88moq8f59KCK2mjl_gsuBiOcOa2PcvZf5_Ryrac4E/edit?gid=0#gid=0")
 SHEET_NAME_BINS = os.getenv("SHEET_NAME_BINS", "devices")
 SHEET_NAME_TASKS = os.getenv("SHEET_NAME_TASKS", "tasks")
 GOOGLE_CREDS_FILE = os.getenv("GOOGLE_CREDS_FILE", "data/credentials.json")  # Service account JSON
@@ -96,6 +96,48 @@ def lights_api():
         data = []
     return jsonify({"data": data})
 
+@app.route("/api/telemetry", methods=["POST"])
+def receive_telemetry():
+    """Receive data from virtual sensors (Smart Bin / Smart Light)"""
+    try:
+        data = request.get_json()
+        print("Telemetry received:", data)
+
+        # Example: save to file or print (you can extend this to Google Sheets)
+        # Ensure data directory exists
+        os.makedirs("data", exist_ok=True)
+        with open("data/telemetry_log.json", "a", encoding="utf-8") as f:
+            f.write(json.dumps(data) + "\n")
+
+        return jsonify({"status": "success", "message": "Telemetry received"}), 200
+    except Exception as e:
+        print("Error:", e)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
+@app.route("/api/evidence/upload", methods=["POST"])
+def upload_evidence():
+    """Receive image evidence (illegal dumping etc.)"""
+    try:
+        device_id = request.form.get("device_id")
+        timestamp = request.form.get("timestamp")
+        file = request.files.get("file")
+        if not file:
+            return jsonify({"status": "error", "message": "No file provided"}), 400
+
+        # sanitize filename components
+        safe_device = (device_id or "unknown").replace(" ", "_")
+        safe_ts = (timestamp or str(int(time.time()))).replace(":", "-")
+
+        filename = f"evidence_{safe_device}_{safe_ts}.jpg"
+        os.makedirs("data", exist_ok=True)
+        filepath = os.path.join("data", filename)
+        file.save(filepath)
+        print(f"Evidence received from {device_id} -> {filename}")
+        return jsonify({"status": "success", "file_saved": filename}), 200
+    except Exception as e:
+        print("Error uploading evidence:", e)
+        return jsonify({"status": "error", "message": str(e)}), 400
+
 if __name__ == "__main__":
-    # For development only. In production use a WSGI server.
+    # For local development only. In production use gunicorn as configured on Render.
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
